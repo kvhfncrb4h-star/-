@@ -1,11 +1,6 @@
-// Vercel Serverless Function: /api/menu.js
-// 이화여대 식단 크롤러 프록시
-// 배포: vercel.com 에 무료로 배포 가능
-
 const https = require("https");
 const http = require("http");
 
-// 날짜별 articleNo 매핑은 필요 없음 — 이 URL은 주간 식단을 모두 포함
 const EWHA_URL =
   "http://www.ewha.ac.kr/ewha/life/restaurant.do?mode=view&articleNo=900&article.offset=0&articleLimit=10";
 
@@ -16,164 +11,134 @@ function fetchUrl(url) {
       url,
       {
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+          "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
           Accept: "text/html,application/xhtml+xml",
           "Accept-Language": "ko-KR,ko;q=0.9",
           Referer: "http://www.ewha.ac.kr/",
         },
       },
       (res) => {
-        // 리다이렉트 처리
-        if (
-          res.statusCode >= 300 &&
-          res.statusCode < 400 &&
-          res.headers.location
-        ) {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           return fetchUrl(res.headers.location).then(resolve).catch(reject);
         }
-
-        let data = "";
-        res.on("data", (chunk) => (data += chunk));
-        res.on("end", () => resolve(data));
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
       }
     );
     req.on("error", reject);
-    req.setTimeout(10000, () => {
-      req.destroy();
-      reject(new Error("Request timeout"));
-    });
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error("timeout")); });
   });
 }
 
 function parseMenu(html) {
-  // 오늘 날짜
   const today = new Date();
-  const todayStr = `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, "0")}.${String(today.getDate()).padStart(2, "0")}`;
-
-  const result = {
-    date: todayStr,
-    cafeterias: [],
-    raw_length: html.length,
-  };
-
-  // 식당 섹션 파싱 (탭별로 구분)
-  // 이화여대 식단 페이지 HTML 구조 기반
-  const cafeteriaPatterns = [
-    { name: "학생문화관 식당", id: "tab1" },
-    { name: "ECC 식당", id: "tab2" },
-    { name: "E-House 식당", id: "tab3" },
-    { name: "교직원 식당", id: "tab4" },
-    { name: "생활관 식당", id: "tab5" },
-  ];
-
-  // 테이블에서 날짜 열과 메뉴 파싱
-  // 이화 식단 페이지: <table> 안에 날짜(th)와 메뉴(td)가 있음
-  const tableRegex = /<table[\s\S]*?<\/table>/gi;
-  const tables = html.match(tableRegex) || [];
-
+  const kst = new Date(today.getTime() + 9 * 60 * 60 * 1000);
+  const yyyy = kst.getUTCFullYear();
+  const mm = String(kst.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(kst.getUTCDate()).padStart(2, "0");
+  const todayStr = `${yyyy}.${mm}.${dd}`;
   const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
-  const todayDay = dayNames[today.getDay()];
+  const todayDay = dayNames[kst.getUTCDay()];
 
-  tables.forEach((table, idx) => {
-    // th 헤더에서 날짜 열 인덱스 찾기
-    const headerMatch = table.match(/<tr[^>]*>([\s\S]*?)<\/tr>/i);
-    if (!headerMatch) return;
+  const result = { date: todayStr, day: todayDay, cafeterias: [] };
 
-    const headers = [];
-    const thMatches = headerMatch[1].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi);
-    let colIdx = 0;
-    let todayColIdx = -1;
+  const tablePattern = /<table[\s\S]*?<\/table>/gi;
+  const tables = html.match(tablePattern) || [];
 
-    for (const th of thMatches) {
-      const text = th[1].replace(/<[^>]+>/g, "").trim();
-      headers.push(text);
-      if (text.includes(todayDay) || text.includes(todayStr.slice(5))) {
-        todayColIdx = colIdx;
-      }
-      colIdx++;
+  for (let tIdx = 0; tIdx < tables.length; tIdx++) {
+    const table = tables[tIdx];
+
+    const headerRowMatch = table.match(/<tr[^>]*>([\s\S]*?)<\/tr>/i);
+    if (!headerRowMatch) continue;
+
+    const thTexts = [];
+    const thPattern = /<th[^>]*>([\s\S]*?)<\/th>/gi;
+    let thMatch;
+    while ((thMatch = thPattern.exec(headerRowMatch[1])) !== null) {
+      thTexts.push(thMatch[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
     }
 
-    if (todayColIdx === -1) return;
+    if (thTexts.length === 0) continue;
 
-    // tbody rows에서 오늘 컬럼 추출
-    const rows = table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
+    let todayCol = -1;
+    thTexts.forEach((t, i) => {
+      if (t.includes(todayDay) || t.includes(dd) || t.includes(todayStr.slice(5))) {
+        todayCol = i;
+      }
+    });
+
+    if (todayCol === -1) continue;
+
+    const rowPattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let rowMatch;
+    let rowCount = 0;
     const menuItems = [];
 
-    for (const row of rows) {
-      const tds = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
-      if (tds.length === 0) continue;
+    while ((rowMatch = rowPattern.exec(table)) !== null) {
+      if (rowCount === 0) { rowCount++; continue; }
 
-      // 첫 번째 td가 구분(아침/점심/저녁)인 경우
-      const label = tds[0]
-        ? tds[0][1].replace(/<[^>]+>/g, "").trim()
-        : "";
-      const targetTd = tds[todayColIdx] || tds[todayColIdx - 1];
-      if (!targetTd) continue;
+      const tds = [];
+      const tdPattern = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+      let tdMatch;
+      while ((tdMatch = tdPattern.exec(rowMatch[1])) !== null) {
+        tds.push(tdMatch[1].replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").trim());
+      }
 
-      const menuText = targetTd[1]
-        .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<[^>]+>/g, "")
-        .trim();
+      if (tds.length === 0) { rowCount++; continue; }
 
-      if (menuText && menuText !== "-" && menuText !== "") {
+      const label = tds[0] || "";
+      const menuText = tds[todayCol] || tds[todayCol - 1] || "";
+
+      if (menuText && menuText !== "-") {
         menuItems.push({ label, menu: menuText });
       }
+      rowCount++;
     }
 
     if (menuItems.length > 0) {
-      result.cafeterias.push({
-        name: cafeteriaPatterns[idx]?.name || `식당 ${idx + 1}`,
-        menus: menuItems,
-      });
+      const beforeTable = html.slice(Math.max(0, html.indexOf(table) - 300), html.indexOf(table));
+      const headingMatch = beforeTable.match(/<h[2-4][^>]*>([^<]+)<\/h[2-4]>/i);
+      const cafeName = headingMatch ? headingMatch[1].trim() : `식당 ${tIdx + 1}`;
+      result.cafeterias.push({ name: cafeName, menus: menuItems });
     }
-  });
+  }
 
-  // 파싱 실패 시 대체 텍스트 검색
   if (result.cafeterias.length === 0) {
-    // 날짜 기반 섹션 텍스트 검색
-    const dateSection = html.match(
-      new RegExp(todayStr.replace(/\./g, "\\.") + "[\\s\\S]{0,2000}")
-    );
-    if (dateSection) {
-      const text = dateSection[0]
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 500);
-      result.cafeterias.push({
-        name: "식단 정보",
-        menus: [{ label: "오늘의 식단", menu: text }],
-      });
-    } else {
-      result.error =
-        "오늘의 식단을 파싱하지 못했습니다. 학교 사이트 구조가 변경되었을 수 있습니다.";
-    }
+    result.debug = {
+      html_length: html.length,
+      tables_found: tables.length,
+      today_str: todayStr,
+      today_day: todayDay,
+      first_table_headers: (() => {
+        if (tables.length === 0) return null;
+        const t = tables[0];
+        const ths = [];
+        const p = /<th[^>]*>([\s\S]*?)<\/th>/gi;
+        let m;
+        while ((m = p.exec(t)) !== null) ths.push(m[1].replace(/<[^>]+>/g, "").trim());
+        return ths;
+      })(),
+      date_samples: (html.match(/\d{4}[.]\d{2}[.]\d{2}/g) || []).slice(0, 10),
+      keyword_점심: html.indexOf("점심"),
+      keyword_저녁: html.indexOf("저녁"),
+      html_sample: tables[0] ? tables[0].slice(0, 800) : html.slice(10000, 10800),
+    };
+    result.error = "파싱 실패";
   }
 
   return result;
 }
 
 module.exports = async (req, res) => {
-  // CORS 허용 (Scriptable 앱에서 호출하기 위해)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Cache-Control", "s-maxage=1800"); // 30분 캐시
 
   try {
     const html = await fetchUrl(EWHA_URL);
     const menuData = parseMenu(html);
-
-    res.status(200).json({
-      success: true,
-      ...menuData,
-      fetched_at: new Date().toISOString(),
-    });
+    res.status(200).json({ success: true, ...menuData, fetched_at: new Date().toISOString() });
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message,
-      date: new Date().toLocaleDateString("ko-KR"),
-    });
+    res.status(500).json({ success: false, error: err.message });
   }
 };
