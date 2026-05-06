@@ -66,7 +66,7 @@ function parseMenu(html, targetDayStr, mealClass) {
   // 식당명 추출 (h5.b-h5-tit01)
   const cafeNamePattern = /<h5[^>]*class="[^"]*b-h5-tit[^"]*"[^>]*>([\s\S]*?)<\/h5>/gi;
   const cafeNames = [...html.matchAll(cafeNamePattern)]
-    .map(m => m[1].replace(/<[^>]+>/g, "").trim());
+    .map(m => m[1].replace(/<[^>]+>/g, "").replace(/[\n\t\r]/g, " ").trim());
 
   sources.forEach((src, idx) => {
     // 날짜별 li 블록 추출
@@ -94,9 +94,10 @@ function parseMenu(html, targetDayStr, mealClass) {
         const preMatch = mealMatch[1].match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
         if (preMatch) {
           menuText = preMatch[1]
-            .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+            .replace(/&lt;([^&]+)&gt;/g, "【$1】")
             .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ")
             .replace(/<[^>]+>/g, "")
+            .replace(/【([^】]+)】/g, "<$1>")
             .trim();
         }
       }
@@ -110,19 +111,20 @@ function parseMenu(html, targetDayStr, mealClass) {
         const altMatch = dayBlock.match(altPattern);
         if (altMatch) {
           menuText = altMatch[1]
-            .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+            .replace(/&lt;([^&]+)&gt;/g, "【$1】")
             .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ")
             .replace(/<[^>]+>/g, "")
+            .replace(/【([^】]+)】/g, "<$1>")
             .trim();
         }
       }
 
       const menuLines = menuText
-        ? menuText.split("\n").map(l => l.trim()).filter(l => l)
+        ? menuText.split("\n").map(l => l.trim()).filter(l => l.length > 0)
         : [];
 
       cafeterias.push({
-        name: cafeNames[idx] || `식당 ${idx + 1}`,
+        name: (cafeNames[idx] || `식당 ${idx + 1}`).replace(/[\n\t\r]/g, " ").replace(/\s+/g, " ").trim(),
         menu: menuLines,
       });
       break;
