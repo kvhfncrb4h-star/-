@@ -41,12 +41,11 @@ function getWeekMonday(date) {
 }
 
 function decodeMenuText(raw) {
-  // 핵심: &lt; &gt; 를 먼저 임시 문자로 치환 → HTML 태그 제거 → 복원
+  // 순서 중요: HTML 태그 먼저 제거 → &lt;&gt; 는 나중에 변환
   return raw
-    .replace(/&lt;/g, "<<").replace(/&gt;/g, ">>")
     .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ")
-    .replace(/<[^>]+>/g, "")
-    .replace(/<</g, "<").replace(/>>/g, ">")
+    .replace(/<[a-zA-Z][^>]*>/g, "").replace(/<\/[a-zA-Z][^>]*>/g, "")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .trim();
 }
 
