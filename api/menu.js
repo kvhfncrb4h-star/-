@@ -94,10 +94,10 @@ function parseMenu(html, targetDayStr, mealClass) {
         const preMatch = mealMatch[1].match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
         if (preMatch) {
           menuText = preMatch[1]
-            .replace(/&lt;([^&]+)&gt;/g, "【$1】")
+            .replace(/&lt;/g, "❬").replace(/&gt;/g, "❭")
             .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ")
             .replace(/<[^>]+>/g, "")
-            .replace(/【([^】]+)】/g, "<$1>")
+            .replace(/❬/g, "<").replace(/❭/g, ">")
             .trim();
         }
       }
@@ -111,10 +111,10 @@ function parseMenu(html, targetDayStr, mealClass) {
         const altMatch = dayBlock.match(altPattern);
         if (altMatch) {
           menuText = altMatch[1]
-            .replace(/&lt;([^&]+)&gt;/g, "【$1】")
+            .replace(/&lt;/g, "❬").replace(/&gt;/g, "❭")
             .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ")
             .replace(/<[^>]+>/g, "")
-            .replace(/【([^】]+)】/g, "<$1>")
+            .replace(/❬/g, "<").replace(/❭/g, ">")
             .trim();
         }
       }
